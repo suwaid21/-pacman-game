@@ -1,0 +1,942 @@
+import pygame
+import random
+import math
+import sys
+
+# --------------------------------------------------
+# INITIALIZATION
+# --------------------------------------------------
+
+pygame.init()
+
+WIDTH = 800
+HEIGHT = 650
+FPS = 60
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Pac-Man")
+clock = pygame.time.Clock()
+
+# --------------------------------------------------
+# COLORS
+# --------------------------------------------------
+
+BLACK = (0, 0, 0)
+YELLOW = (255, 255, 0)
+BLUE = (30, 80, 255)
+WHITE = (255, 255, 255)
+RED = (255, 50, 50)
+PINK = (255, 150, 200)
+CYAN = (50, 255, 255)
+ORANGE = (255, 165, 0)
+GREEN = (0, 255, 100)
+
+# --------------------------------------------------
+# FONTS
+# --------------------------------------------------
+
+font = pygame.font.SysFont("Arial", 24, bold=True)
+small_font = pygame.font.SysFont("Arial", 18, bold=True)
+big_font = pygame.font.SysFont("Arial", 55, bold=True)
+
+# --------------------------------------------------
+# MAZE
+# --------------------------------------------------
+# # = wall
+# . = pellet
+# o = power pellet
+# P = Pac-Man
+# G = ghost
+# - = empty
+
+MAZE = [
+    "####################",
+    "#o................o#",
+    "#.####.#####.####.#",
+    "#..................#",
+    "#.####.##.##.####.#",
+    "#......##.##......#",
+    "######.##.##.######",
+    "######.##.##.######",
+    "#......      ......#",
+    "#.#### ### ### ####.#",
+    "#.#### #     # ####.#",
+    "#......#     #......#",
+    "######.#     #.######",
+    "######.#     #.######",
+    "#......#######......#",
+    "#.####.#####.####.#",
+    "#..................#",
+    "#.####.#####.####.#",
+    "#o................o#",
+    "####################"
+]
+
+# Fix maze rows to same width
+MAX_COLS = 20
+
+# Convert spaces to empty cells
+maze = []
+
+for row in MAZE:
+    row = row.replace(" ", "-")
+    if len(row) < MAX_COLS:
+        row += "-" * (MAX_COLS - len(row))
+    elif len(row) > MAX_COLS:
+        row = row[:MAX_COLS]
+    maze.append(list(row))
+
+ROWS = len(maze)
+COLS = MAX_COLS
+
+CELL = 28
+
+MAZE_WIDTH = COLS * CELL
+MAZE_HEIGHT = ROWS * CELL
+
+OFFSET_X = (WIDTH - MAZE_WIDTH) // 2
+OFFSET_Y = 55
+
+# --------------------------------------------------
+# DIRECTIONS
+# --------------------------------------------------
+
+DIRECTIONS = {
+    "LEFT": (-1, 0),
+    "RIGHT": (1, 0),
+    "UP": (0, -1),
+    "DOWN": (0, 1),
+    "STOP": (0, 0)
+}
+
+# --------------------------------------------------
+# UTILITY FUNCTIONS
+# --------------------------------------------------
+
+def grid_to_pixel(col, row):
+    x = OFFSET_X + col * CELL + CELL // 2
+    y = OFFSET_Y + row * CELL + CELL // 2
+    return x, y
+
+
+def pixel_to_grid(x, y):
+    col = int((x - OFFSET_X) // CELL)
+    row = int((y - OFFSET_Y) // CELL)
+    return col, row
+
+
+def is_wall(col, row):
+    if row < 0 or row >= ROWS or col < 0 or col >= COLS:
+        return True
+
+    return maze[row][col] == "#"
+
+
+def can_move(col, row, direction):
+    dx, dy = direction
+    return not is_wall(col + dx, row + dy)
+
+
+# --------------------------------------------------
+# PAC-MAN
+# --------------------------------------------------
+
+class PacMan:
+
+    def __init__(self):
+        self.start_col = 9
+        self.start_row = 16
+
+        self.reset()
+
+    def reset(self):
+
+        self.col = self.start_col
+        self.row = self.start_row
+
+        self.x, self.y = grid_to_pixel(
+            self.col,
+            self.row
+        )
+
+        self.direction = DIRECTIONS["STOP"]
+        self.next_direction = DIRECTIONS["STOP"]
+
+        self.speed = 3
+
+        self.mouth_open = True
+        self.mouth_timer = 0
+
+    def update(self):
+
+        col, row = pixel_to_grid(self.x, self.y)
+
+        center_x, center_y = grid_to_pixel(col, row)
+
+        # Snap to grid when close enough
+        if abs(self.x - center_x) < self.speed:
+            self.x = center_x
+
+        if abs(self.y - center_y) < self.speed:
+            self.y = center_y
+
+        col, row = pixel_to_grid(self.x, self.y)
+
+        # Change direction at intersections
+        if self.next_direction != DIRECTIONS["STOP"]:
+
+            if can_move(col, row, self.next_direction):
+
+                self.direction = self.next_direction
+                self.next_direction = DIRECTIONS["STOP"]
+
+        # Move
+        dx, dy = self.direction
+
+        if can_move(col, row, self.direction):
+
+            self.x += dx * self.speed
+            self.y += dy * self.speed
+
+        else:
+
+            # Stop at wall
+            self.x = center_x
+            self.y = center_y
+            self.direction = DIRECTIONS["STOP"]
+
+        # Mouth animation
+        self.mouth_timer += 1
+
+        if self.mouth_timer > 8:
+            self.mouth_open = not self.mouth_open
+            self.mouth_timer = 0
+
+        # Screen tunnel
+        if self.x < OFFSET_X:
+            self.x = OFFSET_X + MAZE_WIDTH
+
+        if self.x > OFFSET_X + MAZE_WIDTH:
+            self.x = OFFSET_X
+
+    def draw(self):
+
+        angle = 0
+
+        if self.direction == DIRECTIONS["LEFT"]:
+            angle = 180
+        elif self.direction == DIRECTIONS["UP"]:
+            angle = 90
+        elif self.direction == DIRECTIONS["DOWN"]:
+            angle = 270
+
+        radius = CELL // 2 - 2
+
+        pygame.draw.circle(
+            screen,
+            YELLOW,
+            (int(self.x), int(self.y)),
+            radius
+        )
+
+        # Draw mouth
+        if self.mouth_open:
+
+            mouth_size = math.radians(35)
+
+            direction_angle = math.radians(angle)
+
+            p1 = (
+                self.x,
+                self.y
+            )
+
+            p2 = (
+                self.x + radius * math.cos(
+                    direction_angle + mouth_size
+                ),
+                self.y - radius * math.sin(
+                    direction_angle + mouth_size
+                )
+            )
+
+            p3 = (
+                self.x + radius * math.cos(
+                    direction_angle - mouth_size
+                ),
+                self.y - radius * math.sin(
+                    direction_angle - mouth_size
+                )
+            )
+
+            pygame.draw.polygon(
+                screen,
+                BLACK,
+                [p1, p2, p3]
+            )
+
+
+# --------------------------------------------------
+# GHOST
+# --------------------------------------------------
+
+class Ghost:
+
+    def __init__(self, col, row, color, name):
+
+        self.start_col = col
+        self.start_row = row
+
+        self.color = color
+        self.name = name
+
+        self.reset()
+
+    def reset(self):
+
+        self.col = self.start_col
+        self.row = self.start_row
+
+        self.x, self.y = grid_to_pixel(
+            self.col,
+            self.row
+        )
+
+        self.direction = random.choice([
+            DIRECTIONS["LEFT"],
+            DIRECTIONS["RIGHT"]
+        ])
+
+        self.speed = 2
+
+        self.scared = False
+
+        self.scared_timer = 0
+
+    def update(self, pacman):
+
+        if self.scared:
+
+            self.scared_timer -= 1
+
+            if self.scared_timer <= 0:
+                self.scared = False
+
+        col, row = pixel_to_grid(self.x, self.y)
+
+        center_x, center_y = grid_to_pixel(col, row)
+
+        # Snap
+        if abs(self.x - center_x) < self.speed:
+            self.x = center_x
+
+        if abs(self.y - center_y) < self.speed:
+            self.y = center_y
+
+        col, row = pixel_to_grid(self.x, self.y)
+
+        # Choose new direction at intersections
+        if abs(self.x - center_x) < 1 and abs(self.y - center_y) < 1:
+
+            possible = []
+
+            for direction in [
+                DIRECTIONS["LEFT"],
+                DIRECTIONS["RIGHT"],
+                DIRECTIONS["UP"],
+                DIRECTIONS["DOWN"]
+            ]:
+
+                if can_move(col, row, direction):
+
+                    # Don't immediately reverse unless necessary
+                    if direction != opposite_direction(
+                        self.direction
+                    ):
+                        possible.append(direction)
+
+            if possible:
+
+                if self.scared:
+
+                    self.direction = random.choice(
+                        possible
+                    )
+
+                else:
+
+                    # Simple chase behavior
+                    best_direction = random.choice(
+                        possible
+                    )
+
+                    best_distance = float("inf")
+
+                    for direction in possible:
+
+                        dx, dy = direction
+
+                        nx = col + dx
+                        ny = row + dy
+
+                        distance = (
+                            (nx - pixel_to_grid(
+                                pacman.x,
+                                pacman.y
+                            )[0]) ** 2
+                            +
+                            (ny - pixel_to_grid(
+                                pacman.x,
+                                pacman.y
+                            )[1]) ** 2
+                        )
+
+                        if distance < best_distance:
+
+                            best_distance = distance
+                            best_direction = direction
+
+                    self.direction = best_direction
+
+        dx, dy = self.direction
+
+        if can_move(col, row, self.direction):
+
+            self.x += dx * self.speed
+            self.y += dy * self.speed
+
+        else:
+
+            self.x = center_x
+            self.y = center_y
+
+            possible = []
+
+            for direction in DIRECTIONS.values():
+
+                if direction == DIRECTIONS["STOP"]:
+                    continue
+
+                if can_move(col, row, direction):
+                    possible.append(direction)
+
+            if possible:
+                self.direction = random.choice(possible)
+
+    def make_scared(self):
+
+        self.scared = True
+        self.scared_timer = FPS * 7
+
+    def draw(self):
+
+        body_color = BLUE if self.scared else self.color
+
+        radius = CELL // 2 - 2
+
+        # Ghost body
+        pygame.draw.circle(
+            screen,
+            body_color,
+            (int(self.x), int(self.y - 4)),
+            radius
+        )
+
+        pygame.draw.rect(
+            screen,
+            body_color,
+            (
+                int(self.x - radius),
+                int(self.y - 4),
+                radius * 2,
+                radius + 7
+            )
+        )
+
+        # Bottom waves
+        for i in range(3):
+
+            cx = (
+                self.x
+                - radius
+                + i * radius
+            )
+
+            pygame.draw.circle(
+                screen,
+                body_color,
+                (int(cx), int(self.y + radius)),
+                radius // 2
+            )
+
+        # Eyes
+        eye_y = self.y - 7
+
+        pygame.draw.circle(
+            screen,
+            WHITE,
+            (int(self.x - 7), int(eye_y)),
+            5
+        )
+
+        pygame.draw.circle(
+            screen,
+            WHITE,
+            (int(self.x + 7), int(eye_y)),
+            5
+        )
+
+        # Pupils
+        pygame.draw.circle(
+            screen,
+            BLACK,
+            (int(self.x - 7), int(eye_y)),
+            2
+        )
+
+        pygame.draw.circle(
+            screen,
+            BLACK,
+            (int(self.x + 7), int(eye_y)),
+            2
+        )
+
+
+def opposite_direction(direction):
+
+    return (
+        -direction[0],
+        -direction[1]
+    )
+
+
+# --------------------------------------------------
+# GAME CLASS
+# --------------------------------------------------
+
+class Game:
+
+    def __init__(self):
+
+        self.score = 0
+        self.lives = 3
+        self.level = 1
+
+        self.power_timer = 0
+
+        self.reset_level()
+
+    def reset_level(self):
+
+        # Reset pellets
+        for row in range(ROWS):
+
+            for col in range(COLS):
+
+                if maze[row][col] == ".":
+                    pass
+
+        self.pellets = set()
+        self.power_pellets = set()
+
+        for row in range(ROWS):
+
+            for col in range(COLS):
+
+                if maze[row][col] == ".":
+
+                    self.pellets.add(
+                        (col, row)
+                    )
+
+                elif maze[row][col] == "o":
+
+                    self.power_pellets.add(
+                        (col, row)
+                    )
+
+        self.pacman = PacMan()
+
+        self.ghosts = [
+
+            Ghost(9, 9, RED, "Blinky"),
+
+            Ghost(10, 9, PINK, "Pinky"),
+
+            Ghost(9, 10, CYAN, "Inky"),
+
+            Ghost(10, 10, ORANGE, "Clyde")
+        ]
+
+        self.game_over = False
+        self.won = False
+
+    def reset_positions(self):
+
+        self.pacman.reset()
+
+        for ghost in self.ghosts:
+            ghost.reset()
+
+    def update(self):
+
+        if self.game_over or self.won:
+            return
+
+        self.pacman.update()
+
+        # Update ghosts
+        for ghost in self.ghosts:
+
+            ghost.update(self.pacman)
+
+        # Collect pellet
+        col, row = pixel_to_grid(
+            self.pacman.x,
+            self.pacman.y
+        )
+
+        if (col, row) in self.pellets:
+
+            self.pellets.remove(
+                (col, row)
+            )
+
+            self.score += 10
+
+        # Collect power pellet
+        if (col, row) in self.power_pellets:
+
+            self.power_pellets.remove(
+                (col, row)
+            )
+
+            self.score += 50
+
+            self.power_timer = FPS * 7
+
+            for ghost in self.ghosts:
+                ghost.make_scared()
+
+        # Power timer
+        if self.power_timer > 0:
+            self.power_timer -= 1
+
+        # Ghost collisions
+        for ghost in self.ghosts:
+
+            distance = math.hypot(
+                self.pacman.x - ghost.x,
+                self.pacman.y - ghost.y
+            )
+
+            if distance < CELL * 0.7:
+
+                if ghost.scared:
+
+                    self.score += 200
+                    ghost.reset()
+
+                else:
+
+                    self.lives -= 1
+
+                    if self.lives <= 0:
+
+                        self.game_over = True
+
+                    else:
+
+                        self.reset_positions()
+
+                    return
+
+        # Level completed
+        if (
+            len(self.pellets) == 0
+            and len(self.power_pellets) == 0
+        ):
+
+            self.level += 1
+
+            # Increase difficulty
+            for ghost in self.ghosts:
+                ghost.speed += 0.3
+
+            self.reset_level()
+
+    def draw_maze(self):
+
+        # Draw walls
+        for row in range(ROWS):
+
+            for col in range(COLS):
+
+                x = OFFSET_X + col * CELL
+                y = OFFSET_Y + row * CELL
+
+                if maze[row][col] == "#":
+
+                    pygame.draw.rect(
+                        screen,
+                        BLUE,
+                        (
+                            x + 1,
+                            y + 1,
+                            CELL - 2,
+                            CELL - 2
+                        ),
+                        2
+                    )
+
+        # Draw pellets
+        for col, row in self.pellets:
+
+            x, y = grid_to_pixel(col, row)
+
+            pygame.draw.circle(
+                screen,
+                WHITE,
+                (x, y),
+                3
+            )
+
+        # Draw power pellets
+        for col, row in self.power_pellets:
+
+            x, y = grid_to_pixel(col, row)
+
+            pygame.draw.circle(
+                screen,
+                WHITE,
+                (x, y),
+                7
+            )
+
+    def draw_ui(self):
+
+        score_text = font.render(
+            f"SCORE: {self.score}",
+            True,
+            WHITE
+        )
+
+        level_text = font.render(
+            f"LEVEL: {self.level}",
+            True,
+            WHITE
+        )
+
+        lives_text = font.render(
+            f"LIVES: {self.lives}",
+            True,
+            WHITE
+        )
+
+        screen.blit(
+            score_text,
+            (20, 15)
+        )
+
+        screen.blit(
+            level_text,
+            (WIDTH // 2 - 50, 15)
+        )
+
+        screen.blit(
+            lives_text,
+            (WIDTH - 130, 15)
+        )
+
+    def draw_game_over(self):
+
+        overlay = pygame.Surface(
+            (WIDTH, HEIGHT)
+        )
+
+        overlay.set_alpha(150)
+        overlay.fill(BLACK)
+
+        screen.blit(
+            overlay,
+            (0, 0)
+        )
+
+        text = big_font.render(
+            "GAME OVER",
+            True,
+            RED
+        )
+
+        restart = font.render(
+            "Press R to Restart",
+            True,
+            WHITE
+        )
+
+        screen.blit(
+            text,
+            (
+                WIDTH // 2 - text.get_width() // 2,
+                HEIGHT // 2 - 60
+            )
+        )
+
+        screen.blit(
+            restart,
+            (
+                WIDTH // 2 - restart.get_width() // 2,
+                HEIGHT // 2 + 10
+            )
+        )
+
+    def draw_win(self):
+
+        overlay = pygame.Surface(
+            (WIDTH, HEIGHT)
+        )
+
+        overlay.set_alpha(150)
+        overlay.fill(BLACK)
+
+        screen.blit(
+            overlay,
+            (0, 0)
+        )
+
+        text = big_font.render(
+            "YOU WIN!",
+            True,
+            YELLOW
+        )
+
+        restart = font.render(
+            "Press R to Play Again",
+            True,
+            WHITE
+        )
+
+        screen.blit(
+            text,
+            (
+                WIDTH // 2 - text.get_width() // 2,
+                HEIGHT // 2 - 60
+            )
+        )
+
+        screen.blit(
+            restart,
+            (
+                WIDTH // 2 - restart.get_width() // 2,
+                HEIGHT // 2 + 10
+            )
+        )
+
+    def draw(self):
+
+        screen.fill(BLACK)
+
+        self.draw_ui()
+
+        self.draw_maze()
+
+        self.pacman.draw()
+
+        for ghost in self.ghosts:
+            ghost.draw()
+
+        if self.game_over:
+            self.draw_game_over()
+
+        elif self.won:
+            self.draw_win()
+
+
+# --------------------------------------------------
+# MAIN GAME LOOP
+# --------------------------------------------------
+
+game = Game()
+
+running = True
+
+while running:
+
+    clock.tick(FPS)
+
+    # ----------------------------------------------
+    # EVENTS
+    # ----------------------------------------------
+
+    for event in pygame.event.get():
+
+        if event.type == pygame.QUIT:
+
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+
+            # Quit
+            if event.key == pygame.K_ESCAPE:
+                running = False
+
+            # Restart
+            if event.key == pygame.K_r:
+
+                if game.game_over or game.won:
+
+                    game = Game()
+
+            # Movement
+            if event.key in (
+                pygame.K_LEFT,
+                pygame.K_a
+            ):
+
+                game.pacman.next_direction = \
+                    DIRECTIONS["LEFT"]
+
+            elif event.key in (
+                pygame.K_RIGHT,
+                pygame.K_d
+            ):
+
+                game.pacman.next_direction = \
+                    DIRECTIONS["RIGHT"]
+
+            elif event.key in (
+                pygame.K_UP,
+                pygame.K_w
+            ):
+
+                game.pacman.next_direction = \
+                    DIRECTIONS["UP"]
+
+            elif event.key in (
+                pygame.K_DOWN,
+                pygame.K_s
+            ):
+
+                game.pacman.next_direction = \
+                    DIRECTIONS["DOWN"]
+
+    # ----------------------------------------------
+    # UPDATE
+    # ----------------------------------------------
+
+    game.update()
+
+    # ----------------------------------------------
+    # DRAW
+    # ----------------------------------------------
+
+    game.draw()
+
+    pygame.display.flip()
+
+# --------------------------------------------------
+# EXIT
+# --------------------------------------------------
+
+pygame.quit()
+sys.exit()
